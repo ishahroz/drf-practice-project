@@ -2,7 +2,6 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from base.models import Room
 from .serializers import RoomSerializer
-from base.api import serializers
 
 # To get list of all routes
 @api_view(['GET'])

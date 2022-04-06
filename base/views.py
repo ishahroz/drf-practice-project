@@ -1,77 +1,80 @@
-from django.http import HttpResponse
 from django.shortcuts import render, redirect
 from django.contrib.auth.models import User
-from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth import logout
 from django.contrib.auth.forms import UserCreationForm
-from django.contrib import messages
 from django.db.models import Q
+
+from django.contrib.auth.views import LoginView
+from django.views.generic.detail import DetailView
+from django.views.generic.base import TemplateView, RedirectView
+from django.views.generic.edit import CreateView, UpdateView, DeleteView
+
+from django.contrib.auth.mixins import LoginRequiredMixin
+
 from .models import Room, Topic, Message
 from .forms import RoomForm
 
 
-def loginView(request):
-    page = 'login'
+class UserLoginView(LoginView):
+    template_name = "base/login_register.html"
+    next_page = '/'
+    redirect_authenticated_user = True
 
-    if request.user.is_authenticated:
-        return redirect('home')
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['page'] = 'login'
+        return context
 
-    if request.method == 'POST':
-        username = request.POST.get('username').lower()
-        password = request.POST.get('password')
-        
-        try:
-            user = User.objects.get(username=username)
-        except:
-            messages.error(request, 'User does not exist.')
 
-        # Authenticating user
-        user = authenticate(request, username=username, password=password)
+class UserLogoutView(RedirectView):
+    pattern_name = 'home'
 
-        if user is not None:
-            login(request, user)
-            return redirect('home')
-        else:
-            # Showing django flash message
-            messages.error(request, 'Username or password does not exist.')
+    def get_redirect_url(self, *args, **kwargs):
+        logout(self.request)
+        return super().get_redirect_url(*args, **kwargs)
 
-    context = {'page': page}
-    return render(request, 'base/login_register.html', context)
 
-def logoutView(request):
-    logout(request)
-    return redirect('home')
+class UserRegistrationView(CreateView):
+    model = User
+    form_class = UserCreationForm
+    template_name = 'base/login_register.html'
+    success_url = '/'
 
-def registerUserView(request):
-    page = 'register'
-    form = UserCreationForm()
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['page'] = 'register'
+        return context
 
-    if(request.method == 'POST'):
-        form = UserCreationForm(request.POST)
-        if (form.is_valid()):
-            user = form.save(commit=False)
-            user.username = user.username.lower()
-            user.save()
-            login(request, user)
-            return redirect('home')
-        else:
-            messages.error(request, 'An error occured during registration!')
 
-    context = {'page': page, 'form': form}
-    return render(request, 'base/login_register.html', context)
+class HomeView(TemplateView):
+    template_name = 'base/home.html'
 
-def home(request):
-    q = request.GET.get('q') if request.GET.get('q') != None else ''
-    rooms = Room.objects.filter(
-        Q(topic__name__icontains=q) |
-        Q(name__icontains=q) |
-        Q(description__icontains=q)
-    )
+    def get_context_data(self, **kwargs):
+        q = self.request.GET.get('q') if self.request.GET.get('q') is not None else ''
+        rooms = Room.objects.filter(
+            Q(topic__name__icontains=q) |
+            Q(name__icontains=q) |
+            Q(description__icontains=q)
+        )
+        context = super().get_context_data(**kwargs)
+        context['rooms'] = rooms
+        context['topics'] = Topic.objects.all()
+        context['room_count'] = rooms.count()
+        return context
 
-    topics = Topic.objects.all()
-    room_count = rooms.count()
-    context = {'rooms': rooms, 'topics': topics, 'room_count': room_count}
-    return render(request, 'base/home.html', context)
+
+#TODO: Add Message Send Functionality
+class RoomReview(DetailView):
+    model = Room
+    template_name = 'base/room.html'
+    context_object_name = 'room'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['room_messages'] = self.object.message_set.all().order_by('-created')
+        context['participants'] = self.object.participants.all()
+        return context
+
 
 def room(request, pk):
     room = Room.objects.get(id=pk)
@@ -90,48 +93,32 @@ def room(request, pk):
     context = {'room': room, 'room_messages': room_messages, 'participants': participants}
     return render(request, 'base/room.html', context)
 
-@login_required(login_url='login')
-def createRoom(request):
-    form = RoomForm()
 
-    # When form is submitted, below block will be executed
-    if(request.method == 'POST'):
-        # Persisting and validating Room form data using RoomForm
-        form = RoomForm(request.POST)
-        if(form.is_valid()):
-            form.save()
-            return redirect('home')
+class CreateRoomView(LoginRequiredMixin, CreateView):
+    model = Room
+    form_class = RoomForm
+    template_name = 'base/room_form.html'
+    success_url = '/'
+    login_url = '/login'
 
-    context = {'form': form}
-    return render(request, 'base/room_form.html', context)
 
-@login_required(login_url='login')
-def updateRoom(request, pk):
-    room = Room.objects.get(id=pk)
-    form = RoomForm(instance=room)
+#TODO: Only Room host can update room - restrict
+class UpdateRoomView(LoginRequiredMixin, UpdateView):
+    model = Room
+    form_class = RoomForm
+    template_name = 'base/room_form.html'
+    success_url = '/'
+    login_url = '/login'
 
-    if(request.user != room.host):
-        return HttpResponse("You are not allowed here!!!")
 
-    if(request.method == 'POST'):
-        form = RoomForm(request.POST, instance=room)
-        if(form.is_valid()):
-            form.save()
-            return redirect('home')
+#TODO: Only Room host can updzate room - restrict
+class DeleteRoomView(LoginRequiredMixin, DeleteView):
+    model = Room
+    template_name = 'base/delete.html'
+    success_url = '/'
+    login_url = '/login'
 
-    context = {'form': form}
-    return render(request, 'base/room_form.html', context)
-
-@login_required(login_url='login')
-def deleteRoom(request, pk):
-    room = Room.objects.get(id=pk)
-
-    if(request.user != room.host):
-        return HttpResponse("You are not allowed here!!!")
-
-    if(request.method == 'POST'):
-        room.delete()
-        return redirect('home')
-    
-    context = {'obj': room}
-    return render(request, 'base/delete.html', context)
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['obj'] = self.get_object()
+        return context
